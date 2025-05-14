@@ -45,7 +45,7 @@ except Exception as e:
     st.stop()
 
 # Configuration
-LLM_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"  # A small but capable LLM
+LLM_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"  # A small but capable LLM
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # Must match what was used to create the index
 
 # Load FAISS index and metadata
@@ -77,26 +77,66 @@ def load_resources():
 # Query the Hugging Face Inference API
 def query_llm(system_prompt, user_prompt):
     API_URL = f"https://api-inference.huggingface.co/models/{LLM_MODEL}"
-    headers = {"Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}"}
+    headers = {"Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}", "Content-Type": "application/json"}
+    
+    # Debug print the model being used
+    print(f"Debug - Attempting to use model: {LLM_MODEL}")
     
     try:
+        # Format the prompt as a string in the format Mistral expects
+        formatted_prompt = f"<s>[INST] {system_prompt}\n\n{user_prompt} [/INST]"
+        
         payload = {
-            "inputs": f"<s>[INST] {system_prompt}\n\n{user_prompt} [/INST]",
+            "inputs": formatted_prompt,
             "parameters": {
                 "max_new_tokens": 512,
                 "temperature": 0.7,
                 "top_p": 0.95,
-                "do_sample": True
+                "do_sample": True,
+                "return_full_text": False
             }
         }
         
+        print(f"Debug - Sending request to: {API_URL}")
+        print(f"Debug - Payload: {json.dumps(payload, indent=2)}")
+        
         response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
         
+        # Print full response for debugging
+        print(f"Debug - Response status: {response.status_code}")
+        print(f"Debug - Response headers: {response.headers}")
+        print(f"Debug - Response content: {response.text[:500]}")  # First 500 chars of response
+        
         if response.status_code == 200:
-            return response.json()[0]["generated_text"].split("[/INST]")[-1].strip()
+            try:
+                # Handle the response format from the API
+                result = response.json()
+                if isinstance(result, list) and len(result) > 0:
+                    # Extract just the generated text after the instruction
+                    full_text = result[0].get("generated_text", "")
+                    # Remove the input prompt from the response if it's included
+                    if "[/INST]" in full_text:
+                        return full_text.split("[/INST]")[-1].strip()
+                    return full_text.strip()
+                return "No response generated"
+            except Exception as e:
+                print(f"Error parsing response: {e}")
+                print(f"Response content: {response.text}")
+                return "Error parsing model response"
         elif response.status_code == 401:
             st.error("Authentication error with Hugging Face API. Please check your API token.")
             return "Error: Authentication failed. Please check API token configuration."
+        elif response.status_code == 404:
+            st.error(f"Model not found (404). The model '{LLM_MODEL}' might not be available through the Inference API.")
+            st.info("""
+            Common reasons for this error:
+            1. The model name might be misspelled
+            2. The model might not be available through the Inference API
+            3. The model might require a different API endpoint
+            
+            Try using a different model like 'mistralai/Mistral-7B-v0.1' or 'google/flan-t5-large'.
+            """)
+            return f"Error: Model '{LLM_MODEL}' not found (404)"
         elif response.status_code == 429:
             st.warning("Rate limit exceeded with Hugging Face API. Please try again in a moment.")
             return "The system is currently experiencing high demand. Please try again in a few moments."

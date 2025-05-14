@@ -8,3 +8,6 @@ env/
 ENV/
 .idea/
 .vscode/
+.venv/
+.streamlit/
+.python-version
